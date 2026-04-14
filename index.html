@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RandomCall — Meet Someone New</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --accent: #00ffb2;
+    --accent2: #ff3c6f;
+    --text: #e8e8f0;
+    --muted: #555570;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,255,178,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,255,178,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none; z-index: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    width: 600px; height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,255,178,0.06) 0%, transparent 70%);
+    top: -200px; left: 50%; transform: translateX(-50%);
+    pointer-events: none; z-index: 0;
+    animation: pulse-glow 4s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%,100% { opacity:.6; transform:translateX(-50%) scale(1); }
+    50%      { opacity:1;  transform:translateX(-50%) scale(1.1); }
+  }
+
+/* ── Header ── */
+header {
+position: relative; z-index: 10;
+width: 100%; max-width: 900px;
+padding: 28px 24px 0;
+display: flex; align-items: center; justify-content: space-between;
+}
+.logo { font-family:‘Syne’,sans-serif; font-weight:800; font-size:1.4rem; letter-spacing:-0.5px; }
+.logo span { color: var(–accent); }
+
+.counter-pill {
+display: flex; align-items: center; gap: 8px;
+background: var(–surface);
+border: 1px solid var(–border);
+border-radius: 999px; padding: 8px 16px;
+font-size: .75rem; letter-spacing: .05em;
+transition: border-color .3s;
+}
+.counter-pill:hover { border-color: var(–accent); }
+.pulse-dot {
+width:8px; height:8px; border-radius:50%;
+background: var(–accent);
+animation: blink 1.5s ease-in-out infinite; flex-shrink:0;
+}
+@keyframes blink {
+0%,100% { opacity:1; box-shadow:0 0 6px var(–accent); }
+50%      { opacity:.3; box-shadow:none; }
+}
+#user-count {
+font-weight:500; color:var(–accent);
+font-family:‘Syne’,sans-serif; font-size:.9rem;
+min-width:20px; text-align:center; transition:color .3s;
+}
+
+/* ── Main ── */
+main {
+position:relative; z-index:10;
+width:100%; max-width:900px;
+padding:32px 24px 48px;
+display:flex; flex-direction:column; gap:24px;
+}
+
+/* Status */
+.status-bar {
+display:flex; align-items:center; gap:10px;
+font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(–muted);
+}
+.status-indicator {
+width:6px; height:6px; border-radius:50%;
+background:var(–muted); transition:background .4s; flex-shrink:0;
+}
+.status-bar.ready    .status-indicator { background:var(–accent); }
+.status-bar.calling  .status-indicator { background:#ffc107; animation:blink .7s ease-in-out infinite; }
+.status-bar.live     .status-indicator { background:var(–accent); box-shadow:0 0 8px var(–accent); }
+.status-bar.error    .status-indicator { background:var(–accent2); }
+
+.spinner {
+width:16px; height:16px; border:2px solid rgba(0,255,178,.2);
+border-top-color:var(–accent); border-radius:50%;
+animation:spin .8s linear infinite; display:none; flex-shrink:0;
+}
+.spinner.visible { display:block; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* Videos */
+.video-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media(max-width:600px){ .video-grid { grid-template-columns:1fr; } }
+
+.video-card {
+position:relative; background:var(–surface);
+border:1px solid var(–border); border-radius:var(–radius);
+overflow:hidden; aspect-ratio:4/3;
+transition:border-color .3s, box-shadow .3s;
+}
+.video-card.active {
+border-color:var(–accent);
+box-shadow:0 0 24px rgba(0,255,178,.12);
+}
+.video-card video { width:100%; height:100%; object-fit:cover; display:block; background:#000; }
+
+.video-label {
+position:absolute; bottom:12px; left:12px;
+background:rgba(0,0,0,.7); backdrop-filter:blur(8px);
+border:1px solid rgba(255,255,255,.08); border-radius:6px;
+padding:4px 10px; font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+}
+.video-placeholder {
+position:absolute; inset:0;
+display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+color:var(–muted);
+}
+.video-placeholder svg { opacity:.3; }
+.video-placeholder p { font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; }
+
+/* Controls */
+.controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+
+.btn {
+font-family:‘Syne’,sans-serif; font-weight:700; font-size:.85rem; letter-spacing:.04em;
+border:none; border-radius:var(–radius); cursor:pointer;
+padding:14px 28px;
+transition:transform .15s, box-shadow .2s, opacity .2s;
+position:relative; overflow:hidden;
+}
+.btn:active { transform:scale(.97); }
+.btn:disabled { opacity:.3; cursor:not-allowed; transform:none; }
+.btn-primary { background:var(–accent); color:#000; }
+.btn-primary:not(:disabled):hover { box-shadow:0 0 32px rgba(0,255,178,.4); }
+.btn-danger  { background:var(–accent2); color:#fff; }
+.btn-danger:not(:disabled):hover  { box-shadow:0 0 32px rgba(255,60,111,.4); }
+.btn-ghost   { background:transparent; color:var(–muted); border:1px solid var(–border); }
+.btn-ghost:not(:disabled):hover   { border-color:var(–muted); color:var(–text); }
+
+.btn-icon {
+width:48px; height:48px; padding:0;
+display:flex; align-items:center; justify-content:center;
+border-radius:50%; background:var(–surface); border:1px solid var(–border);
+color:var(–text); cursor:pointer;
+transition:border-color .2s, color .2s, background .2s; flex-shrink:0;
+}
+.btn-icon:disabled { opacity:.3; cursor:not-allowed; }
+.btn-icon:not(:disabled):hover { border-color:var(–muted); }
+.btn-icon.muted { background:rgba(255,60,111,.15); border-color:var(–accent2); color:var(–accent2); }
+
+.sep { flex:1; height:1px; background:var(–border); }
+
+/* Info */
+.info-section {
+border:1px solid var(–border); border-radius:var(–radius);
+padding:20px; background:var(–surface);
+}
+.info-section h3 {
+font-family:‘Syne’,sans-serif; font-size:.8rem; letter-spacing:.1em;
+text-transform:uppercase; color:var(–muted); margin-bottom:12px;
+}
+.info-section p { font-size:.75rem; line-height:1.7; color:var(–muted); }
+.info-section p strong { color:var(–accent); }
+
+/* Toast */
+#toast {
+position:fixed; bottom:32px; left:50%;
+transform:translateX(-50%) translateY(80px);
+background:var(–surface); border:1px solid var(–border);
+border-radius:10px; padding:12px 20px;
+font-size:.78rem; letter-spacing:.04em; color:var(–text);
+z-index:100; transition:transform .4s cubic-bezier(.34,1.56,.64,1), opacity .3s;
+opacity:0; white-space:nowrap; box-shadow:0 8px 32px rgba(0,0,0,.4);
+}
+#toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+</style>
+
+</head>
+<body>
+
+<header>
+  <div class="logo">Random<span>Call</span></div>
+  <div class="counter-pill">
+    <div class="pulse-dot"></div>
+    <span id="user-count">—</span>
+    <span style="color:var(--muted);font-size:.72rem">online now</span>
+  </div>
+</header>
+
+<main>
+  <div class="status-bar" id="status-bar">
+    <div class="status-indicator"></div>
+    <span id="status-text">Press Start Call to begin</span>
+    <div class="spinner" id="spinner"></div>
+  </div>
+
+  <div class="video-grid">
+    <div class="video-card" id="local-card">
+      <video id="local-video" autoplay muted playsinline></video>
+      <div class="video-placeholder" id="local-ph">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M15 10l4.553-2.069A1 1 0 0121 8.88v6.24a1 1 0 01-1.447.89L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/>
+        </svg>
+        <p>Camera off</p>
+      </div>
+      <div class="video-label">You</div>
+    </div>
+
+```
+<div class="video-card" id="remote-card">
+  <video id="remote-video" autoplay playsinline></video>
+  <div class="video-placeholder" id="remote-ph">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+    </svg>
+    <p>Waiting for stranger…</p>
+  </div>
+  <div class="video-label">Stranger</div>
+</div>
+```
+
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-primary" id="btn-start">▶ Start Call</button>
+    <button class="btn btn-danger"  id="btn-next"  disabled>⟳ Next Person</button>
+    <button class="btn btn-ghost"   id="btn-end"   disabled>✕ End</button>
+    <div class="sep"></div>
+    <button class="btn-icon" id="btn-mute" disabled title="Toggle mic">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+        <path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/>
+      </svg>
+    </button>
+    <button class="btn-icon" id="btn-cam" disabled title="Toggle camera">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M15 10l4.553-2.069A1 1 0 0121 8.88v6.24a1 1 0 01-1.447.89L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="info-section">
+    <h3>How it works</h3>
+    <p>
+      Click <strong>Start Call</strong> to allow camera & mic, then you'll be randomly matched
+      with another online user. Video is <strong>peer-to-peer</strong> via WebRTC —
+      the server only handles matchmaking, never your video stream.
+      Click <strong>Next Person</strong> to skip to someone new.
+    </p>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ]
+};
+
+// ── DOM ──────────────────────────────────────────────────────────────────────
+const btnStart  = document.getElementById("btn-start");
+const btnNext   = document.getElementById("btn-next");
+const btnEnd    = document.getElementById("btn-end");
+const btnMute   = document.getElementById("btn-mute");
+const btnCam    = document.getElementById("btn-cam");
+const localVideo  = document.getElementById("local-video");
+const remoteVideo = document.getElementById("remote-video");
+const localPh   = document.getElementById("local-ph");
+const remotePh  = document.getElementById("remote-ph");
+const localCard  = document.getElementById("local-card");
+const remoteCard = document.getElementById("remote-card");
+const statusBar  = document.getElementById("status-bar");
+const statusText = document.getElementById("status-text");
+const spinner    = document.getElementById("spinner");
+const countEl    = document.getElementById("user-count");
+const toastEl    = document.getElementById("toast");
+
+// ── State ────────────────────────────────────────────────────────────────────
+let socket       = null;
+let localStream  = null;
+let pc           = null;      // RTCPeerConnection
+let partnerId    = null;
+let micMuted     = false;
+let camOff       = false;
+
+// ── UI helpers ───────────────────────────────────────────────────────────────
+function setStatus(msg, cls = "") {
+  statusText.textContent = msg;
+  statusBar.className = "status-bar" + (cls ? " " + cls : "");
+}
+function setSpinner(on) { spinner.classList.toggle("visible", on); }
+
+let toastTimer;
+function toast(msg) {
+  clearTimeout(toastTimer);
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 3200);
+}
+
+function showRemote(stream) {
+  remoteVideo.srcObject = stream;
+  remotePh.style.display = "none";
+  remoteCard.classList.add("active");
+}
+function clearRemote() {
+  remoteVideo.srcObject = null;
+  remotePh.style.display = "flex";
+  remoteCard.classList.remove("active");
+}
+
+// ── Media ────────────────────────────────────────────────────────────────────
+async function getMedia() {
+  setStatus("Requesting camera & microphone…");
+  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  localVideo.srcObject = localStream;
+  localPh.style.display = "none";
+  localCard.classList.add("active");
+  btnMute.disabled = false;
+  btnCam.disabled  = false;
+  toast("📷 Camera & mic ready");
+}
+
+// ── WebRTC ───────────────────────────────────────────────────────────────────
+function createPC() {
+  if (pc) { pc.close(); pc = null; }
+  pc = new RTCPeerConnection(ICE_SERVERS);
+
+  // Send our local tracks
+  localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+  // Forward ICE candidates to partner via server
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate && partnerId) {
+      socket.emit("signal", { to: partnerId, data: { candidate } });
+    }
+  };
+
+  // Receive remote stream
+  pc.ontrack = ({ streams }) => {
+    showRemote(streams[0]);
+    setStatus("Connected!", "live");
+    toast("🎉 Connected! Say hi!");
+    setSpinner(false);
+    btnNext.disabled = false;
+    btnEnd.disabled  = false;
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
+      clearRemote();
+      setStatus("Stranger disconnected", "");
+      toast("Stranger left — click Next Person for another match");
+      partnerId = null;
+    }
+  };
+}
+
+async function startAsInitiator() {
+  createPC();
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  socket.emit("signal", { to: partnerId, data: { sdp: pc.localDescription } });
+}
+
+async function handleSignal({ from, data }) {
+  // Lazy-create PC if receiver hasn't created it yet
+  if (!pc) createPC();
+
+  if (data.sdp) {
+    await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    if (data.sdp.type === "offer") {
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit("signal", { to: from, data: { sdp: pc.localDescription } });
+    }
+  } else if (data.candidate) {
+    try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(_) {}
+  }
+}
+
+// ── Socket ───────────────────────────────────────────────────────────────────
+function connectSocket() {
+  socket = io(); // connects to same origin
+
+  socket.on("user-count", n => { countEl.textContent = n; });
+
+  socket.on("waiting", () => {
+    setStatus("Waiting for a stranger…", "calling");
+    setSpinner(true);
+    toast("⏳ Waiting for a match…");
+  });
+
+  socket.on("matched", async ({ partnerId: pid, role }) => {
+    partnerId = pid;
+    setStatus("Match found! Connecting…", "calling");
+    setSpinner(true);
+    toast("🔗 Match found! Connecting…");
+
+    if (role === "initiator") {
+      await startAsInitiator();
+    }
+    // receiver just waits for the offer via "signal"
+  });
+
+  socket.on("signal", handleSignal);
+
+  socket.on("partner-left", () => {
+    clearRemote();
+    partnerId = null;
+    if (pc) { pc.close(); pc = null; }
+    setStatus("Stranger left — click Next Person", "");
+    toast("Stranger disconnected");
+    setSpinner(false);
+    btnNext.disabled = false;
+  });
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+btnStart.addEventListener("click", async () => {
+  btnStart.disabled = true;
+  try {
+    await getMedia();
+  } catch(e) {
+    setStatus("Camera/mic permission denied", "error");
+    toast("⚠️ Please allow camera & mic access");
+    btnStart.disabled = false;
+    return;
+  }
+  connectSocket();
+  setStatus("Connected to server — finding a match…", "ready");
+  socket.emit("find-match");
+  btnEnd.disabled = false;
+});
+
+btnNext.addEventListener("click", () => {
+  if (pc) { pc.close(); pc = null; }
+  clearRemote();
+  const oldPartner = partnerId;
+  partnerId = null;
+  if (oldPartner) socket.emit("skip", { partnerId: oldPartner });
+  else socket.emit("find-match");
+  btnNext.disabled = true;
+  setSpinner(true);
+  setStatus("Finding next person…", "calling");
+  toast("🔄 Finding next person…");
+});
+
+btnEnd.addEventListener("click", () => {
+  if (pc) { pc.close(); pc = null; }
+  clearRemote();
+  if (partnerId) { socket.emit("end-call", { partnerId }); partnerId = null; }
+  btnEnd.disabled = true;
+  btnNext.disabled = true;
+  setSpinner(false);
+  setStatus("Call ended — press Start Call to go again", "");
+  toast("Call ended");
+});
+
+btnMute.addEventListener("click", () => {
+  if (!localStream) return;
+  micMuted = !micMuted;
+  localStream.getAudioTracks().forEach(t => t.enabled = !micMuted);
+  btnMute.classList.toggle("muted", micMuted);
+  btnMute.innerHTML = micMuted
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 19v4M8 23h8"/></svg>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>`;
+  toast(micMuted ? "🔇 Mic muted" : "🎤 Mic on");
+});
+
+btnCam.addEventListener("click", () => {
+  if (!localStream) return;
+  camOff = !camOff;
+  localStream.getVideoTracks().forEach(t => t.enabled = !camOff);
+  btnCam.classList.toggle("muted", camOff);
+  btnCam.innerHTML = camOff
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M21 21H3a2 2 0 01-2-2V8a2 2 0 012-2h3m3-3h6l2 3h4a2 2 0 012 2v9.34m-7.72-2.06A4 4 0 1111.72 8.28"/></svg>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l4.553-2.069A1 1 0 0121 8.88v6.24a1 1 0 01-1.447.89L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>`;
+  localPh.style.display = camOff ? "flex" : "none";
+  toast(camOff ? "📷 Camera off" : "📷 Camera on");
+});
+</script>
+
+</body>
+</html>
